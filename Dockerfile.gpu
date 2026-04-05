@@ -21,6 +21,8 @@ COPY pyproject.toml ./
 RUN uv pip install --system -e "."
 
 COPY wyoming_faster_whisper/ ./wyoming_faster_whisper/
+COPY label_voices.py ./
+COPY compare.py ./
 COPY docker_run.sh ./
 RUN chmod +x docker_run.sh
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import tempfile
 import wave
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioChunkConverter, AudioStop
@@ -48,6 +50,7 @@ class DispatchEventHandler(AsyncEventHandler):
 
         self._audio_converter = AudioChunkConverter(rate=16000, width=2, channels=1)
         self._speaker_recognizer = self._create_speaker_recognizer()
+        self._save_audio_dir = self._get_save_audio_dir()
 
     async def handle_event(self, event: Event) -> bool:
         if AudioChunk.is_type(event.type):
@@ -80,16 +83,21 @@ class DispatchEventHandler(AsyncEventHandler):
             self._wav_file = None
 
             text = await asyncio.to_thread(self._transcribe_plain)
+            speaker_result: Optional[Tuple[str, float]] = None
             if text and self._speaker_recognizer is not None:
-                speaker = await asyncio.to_thread(
+                speaker_result = await asyncio.to_thread(
                     self._speaker_recognizer.identify, self._wav_path
                 )
-                if speaker:
+                if speaker_result:
+                    speaker, score = speaker_result
                     text = f"[{speaker}] {text}"
 
             _LOGGER.info(text)
             await self.write_event(Transcript(text=text).event())
             _LOGGER.debug("Completed request")
+
+            if self._save_audio_dir:
+                self._save_audio(speaker_result, text)
 
             self._language = None
             self._transcriber = None
@@ -144,3 +152,41 @@ class DispatchEventHandler(AsyncEventHandler):
                 "Speaker recognition disabled due to initialization error: %s", err
             )
             return None
+
+    def _get_save_audio_dir(self) -> Optional[Path]:
+        save_dir = os.environ.get("SAVE_AUDIO_DIR", "")
+        if not save_dir:
+            return None
+
+        save_path = Path(save_dir)
+        try:
+            save_path.mkdir(parents=True, exist_ok=True)
+            _LOGGER.info("Saving audio to: %s", save_path)
+            return save_path
+        except Exception as err:
+            _LOGGER.warning("Cannot create save dir %s: %s", save_path, err)
+            return None
+
+    def _save_audio(
+        self, speaker_result: Optional[Tuple[str, float]], text: str
+    ) -> None:
+        if not self._save_audio_dir:
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        if speaker_result:
+            speaker, score = speaker_result
+            filename = f"{timestamp}_{speaker}_{score:.3f}.wav"
+        else:
+            filename = f"{timestamp}_unknown.wav"
+
+        dest_path = self._save_audio_dir / filename
+        try:
+            shutil.copy2(self._wav_path, dest_path)
+
+            transcript_path = dest_path.with_suffix(".txt")
+            transcript_path.write_text(text, encoding="utf-8")
+
+            _LOGGER.debug("Saved audio: %s", dest_path.name)
+        except Exception as err:
+            _LOGGER.warning("Failed to save audio: %s", err)

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import time
 import wave
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -54,24 +56,44 @@ class SpeakerRecognizer:
         self._last_scan_epoch = now
         self._last_dir_mtime = dir_mtime
 
-        refs: Dict[str, np.ndarray] = {}
+        speaker_embeddings: Dict[str, List[np.ndarray]] = defaultdict(list)
+
         for wav_path in sorted(voices_dir.glob("*.wav")):
-            name = wav_path.stem.strip()
-            if not name:
+            filename = wav_path.stem.strip()
+            if not filename:
                 continue
+
+            match = re.match(r"^(.+?)((?:_\d+)+)?$", filename)
+            name = match.group(1) if match else filename
 
             try:
                 samples, sr = _read_wav_mono_float32(wav_path)
                 samples = _resample_linear(samples, sr, self._config.sample_rate)
-                refs[name] = _embed(samples, self._config.sample_rate)
+                emb = _embed(samples, self._config.sample_rate)
+                speaker_embeddings[name].append(emb)
             except Exception as err:
                 _LOGGER.warning("Skipping invalid reference %s: %s", wav_path, err)
 
-        self._reference_embeddings = refs
-        _LOGGER.info("Loaded %d speaker reference(s)", len(self._reference_embeddings))
+        refs: Dict[str, np.ndarray] = {}
+        for name, embeddings in speaker_embeddings.items():
+            if len(embeddings) == 1:
+                refs[name] = embeddings[0]
+            else:
+                avg_emb = np.mean(embeddings, axis=0)
+                norm = np.linalg.norm(avg_emb)
+                if norm > 0:
+                    refs[name] = (avg_emb / norm).astype(np.float32, copy=False)
+            _LOGGER.debug("Speaker '%s': %d sample(s)", name, len(embeddings))
 
-    def identify(self, wav_path: str) -> Optional[str]:
-        """Returns best matching speaker name or None if unknown."""
+        self._reference_embeddings = refs
+        _LOGGER.info(
+            "Loaded %d speaker(s) from %d file(s)",
+            len(refs),
+            sum(len(v) for v in speaker_embeddings.values()),
+        )
+
+    def identify(self, wav_path: str) -> Optional[tuple[str, float]]:
+        """Returns (speaker_name, score) or None if unknown."""
         self.refresh()
         if not self._reference_embeddings:
             return None
@@ -97,7 +119,7 @@ class SpeakerRecognizer:
             return None
 
         _LOGGER.debug("Matched speaker=%s score=%.4f", best_name, best_score)
-        return best_name
+        return (best_name, best_score)
 
 
 def _read_wav_mono_float32(path: Path) -> tuple[np.ndarray, int]:

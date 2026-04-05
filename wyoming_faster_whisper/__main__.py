@@ -103,6 +103,12 @@ async def main() -> None:
         help="Set library to use for speech-to-text (may require extra dependencies)",
     )
     parser.add_argument(
+        "--provider",
+        choices=["local", "openai"],
+        default="local",
+        help="Transcription provider: local (faster-whisper) or openai (OpenAI API) (default: local)",
+    )
+    parser.add_argument(
         "--local-files-only",
         action="store_true",
         help="Don't check HuggingFace hub for updates every time",
@@ -199,10 +205,15 @@ async def main() -> None:
         cpu_threads=args.cpu_threads,
         initial_prompt=args.initial_prompt,
         vad_parameters=vad_parameters,
+        provider=args.provider,
     )
 
     _LOGGER.debug("Pre-loading transcriber")
-    await loader.load_transcriber()
+    if args.provider == "openai":
+        _LOGGER.info("Using OpenAI provider - skipping local model download")
+        await loader.load_transcriber()
+    else:
+        await loader.load_transcriber()
 
     server = AsyncServer.from_uri(args.uri)
 

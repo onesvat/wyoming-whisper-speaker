@@ -31,6 +31,7 @@ class ModelLoader:
         cpu_threads: int,
         initial_prompt: Optional[str],
         vad_parameters: Optional[Dict[str, Any]],
+        provider: str = "local",
     ) -> None:
         self.preferred_stt_library = preferred_stt_library
         self.preferred_language = preferred_language
@@ -45,6 +46,7 @@ class ModelLoader:
         self.cpu_threads = cpu_threads
         self.initial_prompt = initial_prompt
         self.vad_parameters = vad_parameters
+        self.provider = provider
 
         self._transcriber: Dict[TRANSCRIBER_KEY, Transcriber] = {}
         self._transcriber_lock: Dict[TRANSCRIBER_KEY, asyncio.Lock] = defaultdict(
@@ -61,9 +63,12 @@ class ModelLoader:
 
         model = self.model
         if model is None:
-            machine = platform.machine().lower()
-            is_arm = ("arm" in machine) or ("aarch" in machine)
-            model = guess_model(stt_library, language, is_arm)
+            if self.provider == "openai":
+                model = "gpt-4o-transcribe"
+            else:
+                machine = platform.machine().lower()
+                is_arm = ("arm" in machine) or ("aarch" in machine)
+                model = guess_model(stt_library, language, is_arm)
 
         _LOGGER.debug(
             "Selected stt-library '%s' with model '%s'", stt_library.value, model
@@ -79,14 +84,24 @@ class ModelLoader:
             if transcriber is not None:
                 return transcriber
 
-            transcriber = FasterWhisperTranscriber(
-                model,
-                cache_dir=self.download_dir,
-                device=self.device,
-                compute_type=self.compute_type,
-                cpu_threads=self.cpu_threads,
-                vad_parameters=self.vad_parameters,
-            )
+            # OpenAI provider
+            if self.provider == "openai":
+                from .openai_transcriber import OpenAITranscriber
+
+                transcriber = OpenAITranscriber(model_id=model)
+            else:
+                # Local faster-whisper provider
+                models_dir = self.download_dir / "models"
+                models_dir.mkdir(parents=True, exist_ok=True)
+
+                transcriber = FasterWhisperTranscriber(
+                    model,
+                    cache_dir=models_dir,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.cpu_threads,
+                    vad_parameters=self.vad_parameters,
+                )
 
             self._transcriber[key] = transcriber
 
