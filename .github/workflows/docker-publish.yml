@@ -1,0 +1,84 @@
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_HUB_REPO: onesvat/wyoming-whisper-speaker
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant:
+          - { dockerfile: 'Dockerfile.gpu', tag: 'gpu', cache_from: 'type=registry,ref=${{ env.DOCKER_HUB_REPO }}:gpu-buildcache' }
+          - { dockerfile: 'Dockerfile.cpu', tag: 'cpu', cache_from: 'type=registry,ref=${{ env.DOCKER_HUB_REPO }}:cpu-buildcache' }
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_HUB_REPO }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ matrix.variant.tag }},priority=1000
+            type=raw,value=${{ matrix.variant.tag }}-{{ date 'YYYYMMDD' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.variant.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: ${{ matrix.variant.cache_from }}
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_REPO }}:${{ matrix.variant.tag }}-buildcache,mode=max
+
+      - name: Update latest tag (GPU only)
+        if: github.event_name != 'pull_request' && matrix.variant.tag == 'gpu' && github.ref == 'refs/heads/main'
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_HUB_REPO }}:latest ${{ env.DOCKER_HUB_REPO }}:gpu
+
+  notify:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && success()
+    steps:
+      - name: Notify on success
+        run: |
+          echo "✅ Docker images successfully built and pushed to ${{ env.DOCKER_HUB_REPO }}"
+          echo "Images available:"
+          echo "  - ${{ env.DOCKER_HUB_REPO }}:gpu"
+          echo "  - ${{ env.DOCKER_HUB_REPO }}:cpu"
+          echo "  - ${{ env.DOCKER_HUB_REPO }}:latest"
