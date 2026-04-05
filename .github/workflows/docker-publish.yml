@@ -73,21 +73,18 @@ jobs:
           REPO="${{ env.DOCKER_HUB_REPO }}"
           
           if [[ "$IS_TAG" == "true" ]]; then
-            # Tag push: create versioned tags
             MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
-            TAGS="${REPO}:${VARIANT}-v${VERSION},${REPO}:${VARIANT}-${MAJOR_MINOR},${REPO}:${VARIANT},${REPO}:v${VERSION},${REPO}:${VERSION}"
+            TAGS="${REPO}:${VARIANT}-v${VERSION},${REPO}:${VARIANT}-${MAJOR_MINOR},${REPO}:${VARIANT}"
             
             if [[ "$VARIANT" == "gpu" ]]; then
-              TAGS="${TAGS},${REPO}:latest"
+              TAGS="${TAGS},${REPO}:v${VERSION},${REPO}:${VERSION},${REPO}:latest"
             fi
             
             echo "Generated tags (version $VERSION):"
             echo "$TAGS" | tr ',' '\n'
           else
-            # Branch push: create date-based tags
-            DATE=$(date +%Y%m%d)
             BRANCH="${GITHUB_REF#refs/heads/}"
-            TAGS="${REPO}:${VARIANT},${REPO}:${VARIANT}-${DATE},${REPO}:${BRANCH}"
+            TAGS="${REPO}:${VARIANT}"
             
             if [[ "$VARIANT" == "gpu" && "$BRANCH" == "main" ]]; then
               TAGS="${TAGS},${REPO}:latest"
