@@ -107,8 +107,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=registry,ref=${{ env.DOCKER_HUB_REPO }}:${{ matrix.variant.tag }}-buildcache
-          cache-to: type=registry,ref=${{ env.DOCKER_HUB_REPO }}:${{ matrix.variant.tag }}-buildcache,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   notify:
     needs: [prepare, build-and-push]
